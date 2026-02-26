@@ -1,155 +1,254 @@
+
 import streamlit as st
 import pandas as pd
 import joblib
 import plotly.express as px
 
-model = joblib.load("models/churn_model.pkl")
-feature_columns = joblib.load("models/feature_columns.pkl")
-
 st.set_page_config(
     page_title="Customer Churn AI",
-    page_icon="🤖",
+    page_icon="📊",
     layout="wide"
 )
 
-st.markdown("""
-<style>
+@st.cache_resource
+def load_model():
+    model = joblib.load("models/churn_model.pkl")
+    feature_columns = joblib.load("models/feature_columns.pkl")
+    return model, feature_columns
 
-.main {
-    background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-}
 
-.stButton>button {
-    background-color:#00c6ff;
-    color:white;
-    border-radius:10px;
-    height:3em;
-    width:100%;
-    font-size:18px;
-}
+model, feature_columns = load_model()
 
-.metric-card {
-    background:#1b2a41;
-    padding:20px;
-    border-radius:15px;
-}
+st.sidebar.title("Customer Churn AI")
 
-</style>
-""", unsafe_allow_html=True)
+menu = st.sidebar.selectbox(
+    "Navigation",
+    [
+        "🏠 Home",
+        "🔮 Single Prediction",
+        "📂 Batch Prediction",
+        "📈 Analytics"
+    ]
+)
 
-st.title("Customer Churn Prediction Using AI ")
+if menu == "🏠 Home":
 
-tab1, tab2 = st.tabs(["Single Prediction", "Batch Prediction"])
+    st.title("Customer Churn Prediction AI")
 
-with tab1:
+    st.markdown("### Professional AI Dashboard")
 
     col1, col2, col3 = st.columns(3)
 
-    with col1:
-        tenure = st.number_input("Tenure (bulan)",0,100,12)
+    col1.info("Machine Learning Model")
+    col2.info("Batch Prediction")
+    col3.info("Analytics Dashboard")
 
-    with col2:
-        monthly = st.number_input("Monthly Charges",0,10000,70)
+    st.divider()
 
-    with col3:
-        total = st.number_input("Total Charges",0,100000,1000)
+    st.markdown("""
+    ### Features
 
-    if st.button("Predict Now"):
+    ✅ Predict single customer  
+    ✅ Upload CSV for batch prediction  
+    ✅ Download prediction result  
+    ✅ Interactive analytics  
+    ✅ Confidence score  
 
-        input_dict = {
-            'tenure': tenure,
-            'monthly_charges': monthly,
-            'total_charges': total
-        }
+    ---
+    """)
 
-        input_df = pd.DataFrame([input_dict])
+elif menu == "Single Prediction":
 
-        for col in feature_columns:
+    st.title("Single Customer Prediction")
 
-            if col not in input_df.columns:
+    input_data = {}
 
-                input_df[col] = 0
+    col1, col2 = st.columns(2)
 
-        input_df = input_df[feature_columns]
+    for i, col in enumerate(feature_columns):
 
-        prediction = model.predict(input_df)[0]
+        if i % 2 == 0:
+            input_data[col] = col1.number_input(col, value=0.0)
+        else:
+            input_data[col] = col2.number_input(col, value=0.0)
 
-        probability = model.predict_proba(input_df)[0][1]
+
+    if st.button("Predict", use_container_width=True):
+
+        df = pd.DataFrame([input_data])
+
+        prediction = model.predict(df)[0]
+
+        probability = model.predict_proba(df)[0]
+
+        confidence = probability[prediction]
+
 
         st.divider()
 
-        col1,col2 = st.columns(2)
+        if prediction == 1:
 
-        with col1:
+            st.error("Customer will CHURN")
 
-            if prediction == 1:
+            st.metric(
+                label="Confidence",
+                value=f"{confidence:.2%}"
+            )
 
-                st.error("Customer will CHURN")
+        else:
 
-            else:
+            st.success("Customer will STAY")
 
-                st.success("Customer will STAY")
+            st.metric(
+                label="Confidence",
+                value=f"{confidence:.2%}"
+            )
 
-        with col2:
+elif menu == "Batch Prediction":
 
-            st.metric("Churn Probability",f"{probability*100:.2f}%")
+    st.title("Batch Prediction")
 
-        fig = px.bar(
-            x=["Stay","Churn"],
-            y=[1-probability,probability],
-            color=["Stay","Churn"]
-        )
-
-        st.plotly_chart(fig,use_container_width=True)
-
-
-
-with tab2:
-
-    file = st.file_uploader("Upload CSV",type=["csv"])
-
-    if file:
-
-        df = pd.read_csv(file)
-
-        st.write("Preview",df.head())
+    uploaded_file = st.file_uploader(
+        "Upload CSV file",
+        type=["csv"]
+    )
 
 
-        for col in feature_columns:
+    if uploaded_file:
 
-            if col not in df.columns:
+        df = pd.read_csv(uploaded_file)
 
-                df[col] = 0
+        st.subheader("Preview")
 
-        df = df[feature_columns]
+        st.dataframe(df, use_container_width=True)
 
-        prediction = model.predict(df)
 
-        probability = model.predict_proba(df)[:,1]
+        if st.button("Run Prediction", use_container_width=True):
 
-        result = df.copy()
+            with st.spinner("Running prediction..."):
 
-        result["Prediction"] = prediction
 
-        result["Probability"] = probability
+                predictions = model.predict(df)
 
-        st.write("Result",result)
+                probabilities = model.predict_proba(df)
 
-        csv = result.to_csv(index=False)
+                confidence = probabilities.max(axis=1)
 
-        st.download_button(
 
-            "Download Result",
+                df["Prediction"] = predictions
 
-            csv,
+                df["Confidence"] = confidence
 
-            "prediction.csv",
 
-            "text/csv"
+            st.success("Prediction Completed")
 
-        )
 
-        fig = px.histogram(result,x="Probability")
+            st.subheader("Result")
 
-        st.plotly_chart(fig,use_container_width=True)
+            st.dataframe(df, use_container_width=True)
 
+
+            csv = df.to_csv(index=False).encode("utf-8")
+
+
+            st.download_button(
+
+                label="Download CSV",
+
+                data=csv,
+
+                file_name="prediction_result.csv",
+
+                mime="text/csv",
+
+                use_container_width=True
+
+            )
+
+elif menu == "Analytics":
+
+    st.title("Analytics Dashboard")
+
+    uploaded_file = st.file_uploader(
+        "Upload prediction result CSV",
+        type=["csv"]
+    )
+
+
+    if uploaded_file:
+
+        df = pd.read_csv(uploaded_file)
+
+
+        if "Prediction" not in df.columns:
+
+            st.error("Prediction column not found")
+
+        else:
+
+            total = len(df)
+
+            churn = df["Prediction"].sum()
+
+            churn_rate = churn / total
+
+
+            col1, col2, col3 = st.columns(3)
+
+
+            col1.metric(
+                "Total Customers",
+                total
+            )
+
+            col2.metric(
+                "Churn Customers",
+                churn
+            )
+
+            col3.metric(
+                "Churn Rate",
+                f"{churn_rate:.2%}"
+            )
+
+
+            st.divider()
+
+
+            st.subheader("Churn Distribution")
+
+
+            fig1 = px.pie(
+
+                df,
+
+                names="Prediction",
+
+                title="Churn vs Stay"
+
+            )
+
+            st.plotly_chart(fig1, use_container_width=True)
+
+
+            st.subheader("Confidence Distribution")
+
+
+            fig2 = px.histogram(
+
+                df,
+
+                x="Confidence",
+
+                nbins=20,
+
+                title="Confidence Score"
+
+            )
+
+            st.plotly_chart(fig2, use_container_width=True)
+
+
+st.divider()
+
+st.caption("Customer Churn AI • Production Ready • Streamlit")
