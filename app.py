@@ -1,86 +1,66 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
 import plotly.express as px
-
-# -----------------------
-# CONFIG
-# -----------------------
+from database import create_table, insert_prediction, get_history, delete_history
 
 st.set_page_config(
-    page_title="Customer Churn AI",
-    page_icon="🤖",
+    page_title="Customer Churn System",
     layout="wide"
 )
 
-# -----------------------
-# LOAD MODEL
-# -----------------------
+create_table()
 
 model = joblib.load("models/churn_model.pkl")
 feature_columns = joblib.load("models/feature_columns.pkl")
 
-# -----------------------
-# SIDEBAR
-# -----------------------
 
-st.sidebar.title("🤖 Customer Churn AI")
+st.sidebar.title("Customer Churn System")
 
 menu = st.sidebar.radio(
     "Navigation",
-    ["Single Prediction", "Batch Prediction", "Analytics"]
+    [
+        "Prediction",
+        "Batch Prediction",
+        "Analytics",
+        "History"
+    ]
 )
 
-# -----------------------
-# HOME HEADER
-# -----------------------
+st.title("Customer Churn Prediction Platform")
 
-st.title("Customer Churn Prediction System")
+if menu == "Prediction":
 
-# ============================================================
-# 1️⃣ SINGLE PREDICTION
-# ============================================================
-
-if menu == "Single Prediction":
-
-    st.header("🔮 Single Customer Prediction")
+    st.subheader("Single Customer Prediction")
 
     input_data = {}
 
     cols = st.columns(3)
 
     for i, col in enumerate(feature_columns):
-
-        value = cols[i % 3].number_input(
-            col,
-            value=0.0
-        )
-
+        value = cols[i % 3].number_input(col, value=0.0)
         input_data[col] = value
 
-    if st.button("Predict"):
+    if st.button("Run Prediction"):
 
         df = pd.DataFrame([input_data])
 
         prediction = model.predict(df)[0]
-
         probability = model.predict_proba(df)[0][prediction]
 
+        insert_prediction(prediction, float(probability))
+
         if prediction == 1:
-            st.error(f"⚠️ Customer will CHURN")
+            st.error("Customer is likely to churn")
         else:
-            st.success(f"✅ Customer will STAY")
+            st.success("Customer is likely to stay")
 
         st.write(f"Confidence: {probability:.2%}")
 
-# ============================================================
-# 2️⃣ BATCH PREDICTION
-# ============================================================
 
 elif menu == "Batch Prediction":
 
-    st.header("📂 Batch Prediction")
+    st.subheader("Upload CSV for Batch Prediction")
 
     file = st.file_uploader("Upload CSV", type=["csv"])
 
@@ -88,82 +68,86 @@ elif menu == "Batch Prediction":
 
         df = pd.read_csv(file)
 
-        st.write("Preview:")
         st.dataframe(df.head())
 
-        prediction = model.predict(df)
+        if st.button("Process"):
 
-        probability = model.predict_proba(df).max(axis=1)
+            predictions = model.predict(df)
+            probabilities = model.predict_proba(df).max(axis=1)
 
-        df["Prediction"] = prediction
-        df["Confidence"] = probability
+            df["Prediction"] = predictions
+            df["Confidence"] = probabilities
 
-        st.success("Prediction Complete")
+            # Save to DB
+            for p, c in zip(predictions, probabilities):
+                insert_prediction(int(p), float(c))
 
-        st.dataframe(df)
+            st.success("Prediction completed")
 
-        csv = df.to_csv(index=False)
+            st.dataframe(df)
 
-        st.download_button(
-            "Download Result",
-            csv,
-            "prediction.csv",
-            "text/csv"
-        )
+            csv = df.to_csv(index=False)
 
-# ============================================================
-# 3️⃣ ANALYTICS
-# ============================================================
+            st.download_button(
+                "Download Result",
+                csv,
+                "prediction_result.csv",
+                "text/csv"
+            )
+
 
 elif menu == "Analytics":
 
-    st.header("📈 Analytics Dashboard")
+    st.subheader("Analytics Dashboard")
 
-    file = st.file_uploader(
-        "Upload Prediction CSV",
-        type=["csv"]
-    )
+    df = get_history()
 
-    if file:
+    if df.empty:
+        st.warning("No prediction history available")
+    else:
 
-        df = pd.read_csv(file)
+        col1, col2, col3 = st.columns(3)
 
-        st.subheader("Dataset Preview")
+        total = len(df)
+        churn = df["prediction"].sum()
+        churn_rate = churn / total if total > 0 else 0
 
+        col1.metric("Total Predictions", total)
+        col2.metric("Churn Predictions", churn)
+        col3.metric("Churn Rate", f"{churn_rate:.2%}")
+
+        st.divider()
+
+        fig1 = px.pie(
+            df,
+            names="prediction",
+            title="Prediction Distribution"
+        )
+
+        st.plotly_chart(fig1, use_container_width=True)
+
+        fig2 = px.histogram(
+            df,
+            x="confidence",
+            nbins=20,
+            title="Confidence Distribution"
+        )
+
+        st.plotly_chart(fig2, use_container_width=True)
+
+
+
+elif menu == "History":
+
+    st.subheader("Prediction History")
+
+    df = get_history()
+
+    if df.empty:
+        st.info("No history found")
+    else:
         st.dataframe(df)
 
-        col1, col2 = st.columns(2)
-
-        # Pie Chart
-
-        with col1:
-
-            fig = px.pie(
-                df,
-                names="Prediction",
-                title="Churn Distribution"
-            )
-
-            st.plotly_chart(fig)
-
-        # Confidence
-
-        with col2:
-
-            fig = px.histogram(
-                df,
-                x="Confidence",
-                title="Confidence Distribution"
-            )
-
-            st.plotly_chart(fig)
-
-        # Stats
-
-        st.subheader("Statistics")
-
-        st.write("Total Customers:", len(df))
-
-        churn_rate = df["Prediction"].mean()
-
-        st.write(f"Churn Rate: {churn_rate:.2%}")
+        if st.button("Clear History"):
+            delete_history()
+            st.success("History cleared")
